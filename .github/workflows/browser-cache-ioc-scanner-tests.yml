@@ -1,0 +1,43 @@
+name: Browser cache scanner tests
+
+on:
+  pull_request:
+    paths:
+      - 'browser/cache-ioc-scanner/**'
+      - '.github/workflows/browser-cache-ioc-scanner-tests.yml'
+  push:
+    paths:
+      - 'browser/cache-ioc-scanner/**'
+      - '.github/workflows/browser-cache-ioc-scanner-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run synthetic read-only scanner tests
+        run: python -B -m unittest discover -s browser/cache-ioc-scanner/tests -v
+      - name: Validate private-summary shell runner
+        shell: bash
+        run: |
+          bash -n browser/cache-ioc-scanner/run_scan.sh
+          TMP_DATA="$(mktemp -d)"
+          TMP_STATE="$(mktemp -d)"
+          mkdir -p "$TMP_DATA/Default/Cache/Cache_Data"
+          printf 'Test indicator 1688360.cc\n' > "$TMP_DATA/Default/Cache/Cache_Data/example.bin"
+          XDG_STATE_HOME="$TMP_STATE" bash browser/cache-ioc-scanner/run_scan.sh --root "$TMP_DATA" > "$TMP_STATE/output.txt"
+          grep -q 'Scanner Exit Code: 0' "$TMP_STATE/output.txt"
+          grep -q 'Dateien mit Treffern: 1' "$TMP_STATE/output.txt"
+          grep -q 'IOC: 1' "$TMP_STATE/output.txt"
+          if grep -Fq "$TMP_DATA" "$TMP_STATE/output.txt"; then echo 'Raw path leaked into stdout'; exit 1; fi
+          LOG="$(find "$TMP_STATE/public-security/browser-cache-ioc-scanner" -name 'scan-*.log' -print -quit)"
+          test -n "$LOG"
+          test "$(stat -c '%a' "$LOG")" = 600
+          grep -q 'SUMMARY files=1 hit_files=1' "$LOG"
+          rm -rf -- "$TMP_DATA" "$TMP_STATE"
